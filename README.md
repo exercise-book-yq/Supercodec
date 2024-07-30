@@ -22,7 +22,7 @@ In this [paper](https://ieeexplore.ieee.org/abstract/document/10447744), we pres
 
 1. Clone this repo: `git clone https://github.com/exercise-book-yq/Supercodec.git`
 
-2. CD into this repo: `cd SuperCodec`
+2. CD into this repo: `cd Supercodec`
 
 3. Install python requirements: `pip install -r requirements.txt`
 
