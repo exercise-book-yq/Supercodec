@@ -20,9 +20,6 @@ from einops import rearrange, reduce, pack, unpack
 from vector_quantize_pytorch import ResidualVQ
 # from residual_vq import ResidualVQ
 
-from local_attention import LocalMHA
-from local_attention.transformer import FeedForward
-
 from utils import curtail_to_multiple
 from utils import init_weights
 from version import __version__
