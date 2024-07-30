@@ -125,7 +125,7 @@ class ResidualVQ(nn.Module):
         #     null_loss = torch.full((1,), 0., device = device, dtype = x.dtype)
 
         # go through the layers
-        start_time = time.time()
+        
 
         for quantizer_index, layer in enumerate(self.layers):
 
@@ -142,14 +142,12 @@ class ResidualVQ(nn.Module):
             all_losses.append(loss)
 
         all_losses, all_indices = map(partial(torch.stack, dim = -1), (all_losses, all_indices))
-        end_time = time.time()
-        print("量化所需时间：", end_time - start_time)
+        
 
         ret = (quantized_out, all_indices, all_losses)
         start_time = time.time()
         all_codes = self.get_codes_from_indices(all_indices)
-        end_time = time.time()
-        print("解量化所需时间：", end_time - start_time)
+        
 
 
         if return_all_codes:
