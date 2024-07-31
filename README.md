@@ -1,5 +1,6 @@
 # SuperCodec: A Neural Speech Codec with Selective Back-Projection Network
 [![githubio](https://img.shields.io/static/v1?message=Audio%20Samples&logo=Github&labelColor=grey&color=blue&logoColor=white&label=%20&style=flat)](https://exercise-book-yq.github.io/SuperCodec-Demo/)
+[![arXiv](https://img.shields.io/badge/arXiv-Paper-<COLOR>.svg)](https://arxiv.org/abs/2407.20530)
 
 ## Updates
 
