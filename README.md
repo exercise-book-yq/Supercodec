@@ -42,6 +42,14 @@ python train.py --config config_v1.json
 python inferece.py --checkpoint_file [generator checkpoint file path]
 ```
 
+## Additional Experiments
+| Model         | Bitrate   | ViSQOL | STOI(%)  | WARP-Q(↓)  |
+| -------------| ---------| -------| ---------| -----------|
+| Supercodec | 0.95 kbps| 3.118  | 84.80    | 2.219      |
+| TiCodec       | 1 kbps   | 2.490  | 80.21    | 2.578      |
+| HiFiCodec     | 1 kbps   | 2.060  | 75.19    | 2.840      |
+| EnCodec       | 1 kbps   | 2.202  | 76.53    | 2.687      |
+
 ## References
 
 - https://github.com/jik876/hifi-gan
