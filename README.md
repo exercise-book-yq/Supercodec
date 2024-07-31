@@ -66,3 +66,5 @@ All models are trained on LibriTTS.
 - https://github.com/jik876/hifi-gan
 - https://github.com/OlaWod/FreeVC/tree/main
 - https://github.com/lucidrains/audiolm-pytorch
+- https://github.com/y-ren16/TiCodec
+- https://github.com/yangdongchao/AcademiCodec
