@@ -43,6 +43,7 @@ python inferece.py --checkpoint_file [generator checkpoint file path]
 ```
 
 ## Additional Experiments
+Objective evaluation testing on our test set from VCTK at 16 kHz sampling rate. We compare our proposed method with existing various codecs trained with the same configuration.
 | Model         | Bitrate   | ViSQOL | STOI(%)  | WARP-Q(↓)  |
 | -------------| ---------| -------| ---------| -----------|
 | Supercodec | 0.95 kbps| 3.118  | 84.80    | 2.219      |
