@@ -309,7 +309,8 @@ class SBMP_Encoder(nn.Module):
         x_downs_two = self.downs_two(x_res_one)
         
         x_downs_three = x_downs_one + x_downs_two
-        x_f = self.res_four(x_downs_three)
+        x_f = self.skn(x_downs_three, x_downs_one, x_downs_two)
+        x_f = self.res_four(x_f)
         return x_f
 
 #Selective Up-sampling Back-projection
@@ -334,7 +335,8 @@ class SBMP_Decoder(nn.Module):
         x_ups_two = self.ups_two(x_res_one)
        
         x_ups_three = x_ups_one + x_ups_two
-        x_f = self.res_four(x_ups_three)
+        x_f = self.skn(x_ups_three, x_ups_one, x_ups_two)
+        x_f = self.res_four(x_f)
         return x_f
 
 
