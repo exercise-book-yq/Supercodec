@@ -61,7 +61,7 @@ Objective evaluation testing on our test set from VCTK at <b>24 kHz</b> sampling
 | HiFiCodec   | 1.5 kbps| 2.026  | 76.80   | 2.761     |
 | EnCodec     | 1.5 kbps| 2.202  | 79.81   | 2.569     |
 
-All models are trained on LibriTTS.
+All models are non-causal and trained on LibriTTS.
 
 ## References
 
