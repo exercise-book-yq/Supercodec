@@ -51,7 +51,7 @@ Objective evaluation testing on our test set from VCTK at <b>16 kHz</b> sampling
 | HiFiCodec     | 1 kbps   | 2.060  | 75.19    | 2.840      |
 | EnCodec       | 1 kbps   | 2.202  | 76.53    | 2.687      |
 
-Objective evaluation testing on our test set from VCTK at 24 kHz sampling rate. We compare our proposed method with existing various codecs trained with the same configuration.
+Objective evaluation testing on our test set from VCTK at <b>24 kHz</b> sampling rate. We compare our proposed method with existing various codecs trained with the same configuration.
 | Model       | Bitrate  | ViSQOL | STOI(%) | WARP-Q(↓) |
 | ----------- | --------| -------| --------| ----------|
 | Supercodec  | 1.5 kbps| 3.322  | 85.61   | 2.147     |
