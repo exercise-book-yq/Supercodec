@@ -38,7 +38,7 @@ def train(rank, a, h):
     device = torch.device('cuda:{:d}'.format(rank))
 
 
-    soundstream = Supercodec(
+    supercodec = Supercodec(
         codebook_size=h.codebook_size,
         codebook_dim=h.codebook_dim,
         rq_num_quantizers=h.rq_num_quantizers,
@@ -48,7 +48,7 @@ def train(rank, a, h):
         training=True
         )
 
-    soundstream = soundstream.to(device)
+    supercodec = supercodec.to(device)
 
     # DDP(model, device_ids=[rank], find_unused_parameters=True)
 
@@ -56,7 +56,6 @@ def train(rank, a, h):
     disc_model = disc_model.to(device)
     
     if rank == 0:
-        # print(soundstream)
         os.makedirs(a.checkpoint_path, exist_ok=True)
         print("checkpoints directory : ", a.checkpoint_path)
 
@@ -71,18 +70,18 @@ def train(rank, a, h):
     else:
         state_dict_g = load_checkpoint(cp_g, device)
         state_dict_do = load_checkpoint(cp_do, device)
-        soundstream.load_state_dict(state_dict_g['generator'])
+        supercodec.load_state_dict(state_dict_g['generator'])
         disc_model.load_state_dict(state_dict_do['discriminator'])
         steps = state_dict_do['steps'] + 1
         last_epoch = state_dict_do['epoch']
 
     if h.num_gpus > 1:
-        soundstream = DistributedDataParallel(soundstream, device_ids=[rank], find_unused_parameters=True).to(device)
+        supercodec = DistributedDataParallel(supercodec, device_ids=[rank], find_unused_parameters=True).to(device)
         disc_model = DistributedDataParallel(disc_model, device_ids=[rank], find_unused_parameters=True).to(device)
         
-    params = [p for p in soundstream.parameters() if p.requires_grad]
+    params = [p for p in supercodec.parameters() if p.requires_grad]
     disc_params = [p for p in disc_model.parameters() if p.requires_grad]
-    # optim_g = torch.optim.AdamW([soundstream.encoder.parameters(), soundstream.decoder.parameters()], h.learning_rate, betas=[h.adam_b1, h.adam_b2])
+    # optim_g = torch.optim.AdamW([supercodec.encoder.parameters(), supercodec.decoder.parameters()], h.learning_rate, betas=[h.adam_b1, h.adam_b2])
     optim_g = torch.optim.Adam([{'params': params, 'lr': h.lr}], betas=(0.5, 0.9))
 
     optim_d = torch.optim.Adam([{'params': disc_params, 'lr': h.disc_lr}], betas=(0.5, 0.9))
@@ -137,7 +136,7 @@ def train(rank, a, h):
                                              warmup_iter=h.warmup_epoch * len(train_loader),
                                              warmup_ratio=1e-4)
 
-    soundstream.train()
+    supercodec.train()
     disc_model.train()
     logs = {}
     for epoch in range(max(0, last_epoch), a.training_epochs):
@@ -156,7 +155,7 @@ def train(rank, a, h):
             wave = torch.autograd.Variable(wave.to(device, non_blocking=True))
 
 
-            recon_g, loss_w = soundstream(wave, return_recons_only=True)
+            recon_g, loss_w = supercodec(wave, return_recons_only=True)
 
             wave = wave.unsqueeze(1)
 
@@ -171,7 +170,6 @@ def train(rank, a, h):
             
             # Generator
             optim_g.zero_grad()
-            logits_real, fmap_real = disc_model(wave)
             logits_fake, fmap_fake = disc_model(recon_g)
             loss_g = total_loss(fmap_real, logits_fake, fmap_fake, wave, recon_g)
             
@@ -205,7 +203,7 @@ def train(rank, a, h):
                 if steps % a.checkpoint_interval == 0 and steps != 0:
                     checkpoint_path = "{}/g_{:08d}".format(a.checkpoint_path, steps)
                     save_checkpoint(checkpoint_path,
-                                    {'generator': (soundstream.module if h.num_gpus > 1 else soundstream).state_dict()})
+                                    {'generator': (supercodec.module if h.num_gpus > 1 else supercodec).state_dict()})
                     checkpoint_path = "{}/do_{:08d}".format(a.checkpoint_path, steps)
                     save_checkpoint(checkpoint_path,
                                     {
@@ -224,14 +222,14 @@ def train(rank, a, h):
 
                 # Validation
                 if steps % a.validation_interval == 0:  # and steps != 0:
-                    soundstream.eval()
+                    supercodec.eval()
                     torch.cuda.empty_cache()
                     val_err_tot = 0
                     with torch.no_grad():
                         for j, batch in enumerate(validation_loader):
                             wave = batch
                             wave = wave.to(device)
-                            recons = soundstream(wave, return_recons_only = True)
+                            recons = supercodec(wave, return_recons_only = True)
                             wave_mel = mel_spectrogram(wave.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate,
                                                           h.hop_size, h.win_size,
                                                           h.fmin, h.fmax_for_loss)
@@ -255,7 +253,7 @@ def train(rank, a, h):
 
                         val_err = val_err_tot / (j + 1)
                         sw.add_scalar("validation/mel_spec_error", val_err, steps)
-                    soundstream.train()
+                    supercodec.train()
             steps += 1
         
 
