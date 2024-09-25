@@ -457,7 +457,7 @@ class Supercodec(nn.Module):
             self,
             x,
             return_encoded=False,
-            return_recons_only=False,
+            return_recons_only=True,
             input_sample_hz=None,
             apply_grad_penalty=True
     ):
