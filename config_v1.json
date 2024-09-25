@@ -1,7 +1,7 @@
 {
     "resblock": "1",
     "num_gpus": 1,
-    "batch_size": 16,
+    "batch_size": 8,
     "learning_rate": 0.0002,
     "adam_b1": 0.8,
     "adam_b2": 0.99,
@@ -9,6 +9,12 @@
     "seed": 1234,
     "hop_length":80,
 
+    "filters": 32,
+    "lr":3e-4,
+    "disc_lr":3e-4,
+    "max_epoch":3100,
+    "warmup_epoch":0,
+    
     "segment_size": 16000,
     "num_mels": 80,
     "num_freq": 1025,
