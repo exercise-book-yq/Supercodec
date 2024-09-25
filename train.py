@@ -170,6 +170,7 @@ def train(rank, a, h):
             
             # Generator
             optim_g.zero_grad()
+            logits_real, fmap_real = disc_model(wave)
             logits_fake, fmap_fake = disc_model(recon_g)
             loss_g = total_loss(fmap_real, logits_fake, fmap_fake, wave, recon_g)
             
@@ -180,7 +181,7 @@ def train(rank, a, h):
                                           h.fmin, h.fmax_for_loss)
 
             loss_mel = F.l1_loss(wave_mel, recon_g_mel) * 45
-            loss = loss_g + loss_w
+            loss = loss_g + loss_w + loss_mel
             loss.backward()
             optim_g.step()
 
@@ -272,7 +273,7 @@ def main():
     parser.add_argument('--input_training_file', default="")
     parser.add_argument('--input_validation_file',
                         default="")
-    parser.add_argument('--checkpoint_path', default='')
+    parser.add_argument('--checkpoint_path', default='test/')
     parser.add_argument('--config', default='config_v1.json')
     parser.add_argument('--training_epochs', default=3100, type=int)
     parser.add_argument('--apply_grad_penalty_every', default=4, type=int)
