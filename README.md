@@ -9,6 +9,7 @@
 - Code release. (Jul. 27, 2024)
 - Online demo at Github See [here](https://exercise-book-yq.github.io/SuperCodec-Demo/). (Aug. 13, 2023)
 - Supports 16-48 kHz at variable bitrates. (Jul. 27, 2024)
+- We also provide the [pretrained models](https://drive.google.com/drive/folders/1Bjgqfhv6EwR3APPO0nfWwlwVRECjzCx1?usp=sharing) trained on Librispeech for 300 k steps.
 
 In this [paper](https://arxiv.org/abs/2407.20530), we present SuperCodec, a neural speech codec that replaces the standard feedforward up- and downsampling layers with Selective Up-sampling Back Projection (SUBP) and Selective Down-sampling Back Projection (SDBP) modules. Our proposed method efficiently preserves the information, on the one hand, and attains rich features from lower to higher layers of the network, on the other. Additionally, we propose a selective feature fusion block in the SUBP and SDBP to consolidate the input feature maps
 
