@@ -7,7 +7,7 @@ import torch
 from torch import nn
 from einops import rearrange
 
-from conv import NormConv2d
+from modules.conv import NormConv2d
 
 
 FeatureMapType = tp.List[torch.Tensor]
