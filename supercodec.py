@@ -15,7 +15,7 @@ import time
 import torchaudio.transforms as T
 from torchaudio.functional import resample
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
-from einops import rearrange, reduce, pack, unpack
+from einops import rearrange, reduce, pack, unpackk
 
 from vector_quantize_pytorch import ResidualVQ
 # from residual_vq import ResidualVQ
@@ -27,10 +27,18 @@ from packaging import version
 
 parsed_version = version.parse(__version__)
 
+from modules.snaked import Snake1d
+from modules.conv import pad1d, unpad1d, get_extra_padding_for_conv1d
+
 import pickle
 
 
 # helper functions
+def init_weights(m):
+    if isinstance(m, nn.Conv1d):
+        nn.init.trunc_normal_(m.weight, std=0.02)
+        nn.init.constant_(m.bias, 0)
+
 def get_padding(kernel_size, dilation=1):
     return int((kernel_size * dilation - dilation) / 2)
 
@@ -92,11 +100,57 @@ def gradient_penalty(wave, output, weight=10):
     return weight * ((vector_norm(gradients, dim=1) - 1) ** 2).mean()
 
 
-# Selective feature fusion
-# Youqiang Zheng
-# 2024.04.04
+class SConv1d(nn.Module):
+    def __init__(self, chan_in, chan_out, kernel_size, causal, pad_mode='reflect', **kwargs):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.dilation = kwargs.get('dilation', 1)
+        self.stride = kwargs.get('stride', 1)
+        self.pad_mode = pad_mode
+        self.padding = self.dilation * (kernel_size - 1) + 1 - self.stride
+        self.conv = weight_norm(nn.Conv1d(chan_in, chan_out, self.kernel_size, **kwargs))
+        self.chan_in = chan_in
+        self.chan_out = chan_out
+        self.causal = causal
+
+
+    def forward(self, x):
+        extra_padding = get_extra_padding_for_conv1d(x, self.kernel_size, self.stride, self.padding)
+        if self.causal:
+            x = pad1d(x, (self.padding, extra_padding), mode=self.pad_mode)
+        else:
+            padding_right = self.padding // 2
+            padding_left = self.padding - padding_right
+            x = pad1d(x, (padding_left, padding_right + extra_padding), mode=self.pad_mode)
+        return self.conv(x)
+    
+class SConvTranspose1d(nn.Module):
+    def __init__(self, chan_in, chan_out, kernel_size, stride, **kwargs):
+        super().__init__()
+        self.upsample_factor = stride
+        self.padding = kernel_size - 1
+        self.conv = weight_norm(nn.ConvTranspose1d(chan_in, chan_out, kernel_size, stride, **kwargs))
+
+    def forward(self, x):
+        n = x.shape[-1]
+
+        out = self.conv(x)
+        out = out[..., :(n * self.upsample_factor)]
+
+        return out
+    
 class SelectNet(nn.Module):
-    def __init__(self, in_channels, kernel_size=3, M=2, r=2, stride=1, L=32, G=1):
+    def __init__(
+            self, 
+            in_channels, 
+            kernel_size=3, 
+            M=2, 
+            r=2, 
+            stride=1, 
+            L=32, 
+            G=1, 
+            causal=False, 
+            pad_mode='reflect'):
         """ Constructor
         Args:
             features: input channel dimensionality.
@@ -113,13 +167,13 @@ class SelectNet(nn.Module):
         self.features = in_channels
 
         self.fc = nn.Sequential(
-            nn.Conv1d(in_channels, in_channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1)),
-            nn.ReLU(inplace=False)
+            Snake1d(in_channels),
+            SConv1d(chan_in=in_channels, chan_out=in_channels, kernel_size=kernel_size, causal=causal, pad_mode=pad_mode)
             )
         self.fcs = nn.ModuleList([])
         for i in range(M):
             self.fcs.append(
-                nn.Conv1d(in_channels, in_channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1))
+                SConv1d(chan_in=in_channels, chan_out=in_channels, kernel_size=kernel_size, causal=causal, pad_mode=pad_mode),
             )
         self.softmax = nn.Softmax(dim=1)
 
@@ -145,160 +199,38 @@ class SelectNet(nn.Module):
 
 # non-casual res-block
 
-class ResBlock1(torch.nn.Module):
-    def __init__(self, channels, kernel_size=3, dilation=(1, 3, 5)):
-        super(ResBlock1, self).__init__()
-        self.convs1 = nn.ModuleList([weight_norm(nn.Conv1d(channels, channels, kernel_size, 1, dilation=dilation[0],
-                                                           padding=get_padding(kernel_size, dilation[0]))), weight_norm(
-            nn.Conv1d(channels, channels, kernel_size, 1, dilation=dilation[1],
-                      padding=get_padding(kernel_size, dilation[1]))), weight_norm(
-            nn.Conv1d(channels, channels, kernel_size, 1, dilation=dilation[2],
-                      padding=get_padding(kernel_size, dilation[2])))])
-        self.convs1.apply(init_weights)
+class ResBlock(torch.nn.Module):
+    def __init__(self, channels, kernel_size=3, dilation=(1, 3, 9), causal=False, pad_mode='reflect'):
+        super(ResBlock, self).__init__()
+        self.convs1 = nn.Sequential(
+            Snake1d(channels),
+            SConv1d(chan_in=channels, chan_out=channels, kernel_size=kernel_size, dilation=dilation[0], causal=causal, pad_mode=pad_mode),
+            Snake1d(channels),
+            SConv1d(chan_in=channels, chan_out=channels, kernel_size=kernel_size, dilation=dilation[1], causal=causal, pad_mode=pad_mode),
+            Snake1d(channels),
+            SConv1d(chan_in=channels, chan_out=channels, kernel_size=kernel_size, dilation=dilation[2], causal=causal, pad_mode=pad_mode)
+        )
 
-        # self.convs2 = nn.ModuleList(
-        #     [weight_norm(
-        #         nn.Conv1d(channels, channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1))),
-        #      weight_norm(
-        #          nn.Conv1d(channels, channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1))),
-        #      weight_norm(
-        #          nn.Conv1d(channels, channels, kernel_size, 1, dilation=1, padding=get_padding(kernel_size, 1)))])
-        # self.convs2.apply(init_weights)
 
     def forward(self, x):
-        for c1 in self.convs1:
-            xt = F.leaky_relu(x, LRELU_SLOPE)
-            xt = c1(xt)
-            x = xt + x
+        x = x + self.convs1(x)
         return x
-
-    def remove_weight_norm(self):
-        for l in self.convs1:
-            remove_weight_norm(l)
-        for l in self.convs2:
-            remove_weight_norm(l)
-
-
-class ResBlock2(torch.nn.Module):
-    def __init__(self, channels, kernel_size=3, dilation=(1, 3)):
-        super(ResBlock2, self).__init__()
-        self.convs = nn.ModuleList([weight_norm(nn.Conv1d(channels, channels, kernel_size, 1, dilation=dilation[0],
-                                                          padding=get_padding(kernel_size, dilation[0]))), weight_norm(
-            nn.Conv1d(channels, channels, kernel_size, 1, dilation=dilation[1],
-                      padding=get_padding(kernel_size, dilation[1])))])
-        self.convs.apply(init_weights)
-
-    def forward(self, x):
-        for c in self.convs:
-            xt = F.leaky_relu(x, LRELU_SLOPE)
-            xt = c(xt)
-            x = xt + x
-        return x
-
-    def remove_weight_norm(self):
-        for l in self.convs:
-            remove_weight_norm(l)
-
-
-
-
-
-
-
-# sound stream
-
-class Residual(nn.Module):
-    def __init__(self, fn):
-        super().__init__()
-        self.fn = fn
-
-    def forward(self, x, **kwargs):
-        return self.fn(x, **kwargs) + x
-
-# causalconv1d
-    
-class CausalConv1d(nn.Module):
-    def __init__(self, chan_in, chan_out, kernel_size, **kwargs):
-        super().__init__()
-        kernel_size = kernel_size
-        dilation = kwargs.get('dilation', 1)
-        stride = kwargs.get('stride', 1)
-        self.causal_padding = dilation * (kernel_size - 1) + 1 - stride
-        self.conv = nn.Conv1d(chan_in, chan_out, kernel_size, **kwargs)
-        self.chan_in = chan_in
-        self.chan_out = chan_out
-
-    def forward(self, x):
-        x = F.pad(x, (self.causal_padding, 0), mode='reflect')
-        if self.chan_in != self.chan_out:
-            x = self.conv(x)
-            return x
-        return self.conv(x)
-
-#causal convtranspose1d
-
-class CausalConvTranspose1d(nn.Module):
-    def __init__(self, chan_in, chan_out, kernel_size, stride, **kwargs):
-        super().__init__()
-        self.upsample_factor = stride
-        self.padding = kernel_size - 1
-        self.conv = nn.ConvTranspose1d(chan_in, chan_out, kernel_size, stride, **kwargs)
-
-    def forward(self, x):
-        n = x.shape[-1]
-
-        out = self.conv(x)
-        out = out[..., :(n * self.upsample_factor)]
-
-        return out
-
-#causal resblock
-
-def ResidualUnit(chan_in, chan_out, dilation, kernel_size=7):
-    return Residual(nn.Sequential(
-        CausalConv1d(chan_in, chan_out, kernel_size, dilation=dilation),
-        nn.ELU(),
-        CausalConv1d(chan_out, chan_out, 1),
-        nn.ELU()
-    ))
-
-#Encoderblock three residual blocks one causalconv1d
-def EncoderBlock(chan_in, chan_out, stride, cycle_dilations=(1, 3, 9)):
-    it = cycle(cycle_dilations)
-    return nn.Sequential(
-        ResidualUnit(chan_in, chan_in, next(it)),
-        ResidualUnit(chan_in, chan_in, next(it)),
-        ResidualUnit(chan_in, chan_in, next(it)),
-        CausalConv1d(chan_in, chan_out, 2 * stride, stride=stride)
-    )
-
-#Decoderblock one causalconvtransposed three residual blocks
-def DecoderBlock(chan_in, chan_out, stride, cycle_dilations=(1, 3, 9)):
-    even_stride = (stride % 2 == 0)
-    padding = (stride + (0 if even_stride else 1)) // 2
-    output_padding = 0 if even_stride else 1
-
-    it = cycle(cycle_dilations)
-    return nn.Sequential(
-        CausalConvTranspose1d(chan_in, chan_out, 2 * stride, stride=stride),
-        ResidualUnit(chan_out, chan_out, next(it)),
-        ResidualUnit(chan_out, chan_out, next(it)),
-        ResidualUnit(chan_out, chan_out, next(it)),
-    )
 
 
 # Selective Down-sampling Back-projection 
-class SBMP_Encoder(nn.Module):
-    def __init__(self, chan_in, chan_out, stride, cycle_dilations=(1, 3, 5)):
+class SDBP_EncoderBlock(nn.Module):
+    def __init__(self, chan_in, chan_out, stride, dilations=(1, 3, 9), causal=False, pad_mode='reflect'):
         super().__init__()
-        self.it = cycle(cycle_dilations)
-        self.downs_one = CausalConv1d(chan_in, chan_out, 2 * stride, stride=stride)
-        self.downs_two = CausalConv1d(chan_in, chan_out, 2 * stride, stride=stride)
-        self.ups_one = CausalConvTranspose1d(chan_out, chan_in, 2 * stride, stride=stride)
-        self.res_one = ResBlock2(chan_in)
+        self.downs_one = SConv1d(chan_in, chan_out, 2 * stride, causal=causal, pad_mode=pad_mode, stride=stride)
+        self.downs_two = SConv1d(chan_in, chan_out, 2 * stride, causal=causal, pad_mode=pad_mode, stride=stride)
+        self.ups_one = SConvTranspose1d(chan_out, chan_in, 2 * stride, stride=stride)
+        self.res_one = ResBlock(chan_in, kernel_size=3, dilation=dilations, causal=causal, pad_mode=pad_mode)
         
-        self.res_four = ResBlock1(chan_out)
-        self.skn = SelectNet(chan_out)
+        self.res_four = nn.Sequential(
+            ResBlock(chan_out, kernel_size=3, dilation=dilations, causal=causal, pad_mode=pad_mode),
+            Snake1d(chan_out)
+        )
+        self.skn = SelectNet(chan_out, kernel_size=3, causal=causal, pad_mode=pad_mode)
 
     def forward(self, x):
         x_downs_one = self.downs_one(x)
@@ -314,17 +246,19 @@ class SBMP_Encoder(nn.Module):
         return x_f
 
 #Selective Up-sampling Back-projection
-class SBMP_Decoder(nn.Module):
-    def __init__(self, chan_in, chan_out, stride, cycle_dilations=(1, 3, 5)):
+class SUBP_DecoderBlock(nn.Module):
+    def __init__(self, chan_in, chan_out, stride, dilations=(1, 3, 9), causal=False, pad_mode='reflect'):
         super().__init__()
-        self.it = cycle(cycle_dilations)
-        self.downs_one = CausalConv1d(chan_out, chan_in, 2 * stride, stride=stride)
-        self.ups_one = CausalConvTranspose1d(chan_in, chan_out, 2 * stride, stride=stride)
-        self.ups_two = CausalConvTranspose1d(chan_in, chan_out, 2 * stride, stride=stride)
-        self.res_one = ResBlock2(chan_in)
+        self.downs_one = SConv1d(chan_out, chan_in, 2 * stride, causal=causal, pad_mode=pad_mode, stride=stride)
+        self.ups_one = SConvTranspose1d(chan_in, chan_out, 2 * stride, stride=stride)
+        self.ups_two = SConvTranspose1d(chan_in, chan_out, 2 * stride, stride=stride)
+        self.res_one = ResBlock(chan_in, kernel_size=3, dilation=dilations, causal=causal, pad_mode=pad_mode)
         
-        self.res_four = ResBlock1(chan_out)
-        self.skn = SelectNet(chan_out)
+        self.res_four = nn.Sequential(
+            ResBlock(chan_out, kernel_size=3, dilation=dilations, causal=causal, pad_mode=pad_mode),
+            Snake1d(chan_out)
+        )
+        self.skn = SelectNet(chan_out, kernel_size=3, causal=causal, pad_mode=pad_mode)
 
     def forward(self, x):
         x_ups_one = self.ups_one(x)
@@ -338,6 +272,7 @@ class SBMP_Decoder(nn.Module):
         x_f = self.skn(x_ups_three, x_ups_one, x_ups_two)
         x_f = self.res_four(x_f)
         return x_f
+ 
 
 
 class Supercodec(nn.Module):
@@ -347,15 +282,18 @@ class Supercodec(nn.Module):
             channels=32,
             strides=(2, 4, 5, 8),
             channel_mults=(2, 4, 8, 16),
-            codebook_dim=512,
+            codebook_dim=128,
             codebook_size=1024,
-            rq_num_quantizers=8,
+            codebook_size_res=512,
+            rq_num_quantizers=2,
             input_channels=1,
             enc_cycle_dilations=(1, 3, 9),
             dec_cycle_dilations=(1, 3, 9),
             target_sample_hz=16000,
             shared_codebook=False,
-            training=False
+            training=False,
+            causal=False,
+            pad_mode='reflect',
     ):
         super().__init__()
 
@@ -377,18 +315,17 @@ class Supercodec(nn.Module):
         layer_channels = (channels, *layer_channels)
         chan_in_out_pairs = tuple(zip(layer_channels[:-1], layer_channels[1:]))
 
-        encoder_blocks = []
+        encoder_blocks = [SConv1d(input_channels, channels, 7, causal=causal, pad_mode=pad_mode)]
 
         for ((chan_in, chan_out), layer_stride) in zip(chan_in_out_pairs, strides):
-            encoder_blocks.append(SBMP_Encoder(chan_in, chan_out, layer_stride, enc_cycle_dilations))
-        self.encoder = nn.Sequential(
-            CausalConv1d(input_channels, channels, 7),
-            *encoder_blocks,
-            CausalConv1d(layer_channels[-1], codebook_dim, 3)
-        )
+            encoder_blocks.append(SDBP_EncoderBlock(chan_in, chan_out, layer_stride, enc_cycle_dilations, causal=causal, pad_mode=pad_mode))
+
+        encoder_blocks += [SConv1d(layer_channels[-1], codebook_dim, 7, causal=causal, pad_mode=pad_mode)]
+
+        self.encoder = nn.Sequential(*encoder_blocks)
 
 
-        
+       
         self.rq = ResidualVQ(
             dim=codebook_dim,
             num_quantizers=rq_num_quantizers,
@@ -399,22 +336,24 @@ class Supercodec(nn.Module):
         )
 
 
-        decoder_blocks = []
+        decoder_blocks = [SConv1d(codebook_dim, layer_channels[-1], 7, causal=causal, pad_mode=pad_mode)]
+       
 
         for ((chan_in, chan_out), layer_stride) in zip(reversed(chan_in_out_pairs), reversed(strides)):
-            decoder_blocks.append(SBMP_Decoder(chan_out, chan_in, layer_stride, dec_cycle_dilations))
+            decoder_blocks.append(SUBP_DecoderBlock(chan_out, chan_in, layer_stride, dec_cycle_dilations, causal=causal, pad_mode=pad_mode))
+           
+        decoder_blocks += [SConv1d(channels, input_channels, 7, causal=causal, pad_mode=pad_mode)]
+        self.decoder = nn.Sequential(*decoder_blocks)
 
-
-        self.decoder = nn.Sequential(
-            CausalConv1d(codebook_dim, layer_channels[-1], 7),
-            *decoder_blocks,
-            CausalConv1d(channels, input_channels, 7)
-        )
+    
 
         # decoder
         self.decoder_blocks = decoder_blocks
 
         self.training = training
+        self.codebook_dim = codebook_dim // 2 if split_res else codebook_dim
+
+        self.apply(init_weights)
 
     @property
     def configs(self):
@@ -457,9 +396,7 @@ class Supercodec(nn.Module):
             self,
             x,
             return_encoded=False,
-            return_recons_only=True,
             input_sample_hz=None,
-            apply_grad_penalty=True
     ):
         start_time = time.time()
         x, ps = pack([x], '* n')
@@ -470,21 +407,35 @@ class Supercodec(nn.Module):
         x = curtail_to_multiple(x, self.seq_len_multiple_of)
         if x.ndim == 2:
             x = rearrange(x, 'b n -> b 1 n')
-        orig_x = x.clone()
         x = self.encoder(x)
+
 
         x = rearrange(x, 'b c n -> b n c')
         
-        x_new, indices, commit_loss = self.rq(x)
+        x_new, indice, commit_loss = self.rq(x)
+        indices = [indice]
+        commit_losses = [commit_loss]
         if return_encoded:
             return x_new, indices
         
         x_new = rearrange(x_new, 'b c n -> b n c')
         
         recon_x = self.decoder(x_new)
-        
-        if return_recons_only:
-            recon_x, = unpack(recon_x, ps, '* c n')
-            if self.training:
-                return recon_x, commit_loss.sum()
-            return recon_x
+
+        recon_x, = unpack(recon_x, ps, '* c n')
+        if self.training:
+            return recon_x, commit_losses
+        return recon_x
+
+if __name__ == "__main__":
+    x = torch.randn(8, 16000)
+    supercodec = Supercodec(strides=(4,4,4,5), channel_mults=(4,4,8,8))
+    y = supercodec(x)
+    print(y.shape)
+    for n, m in supercodec.named_modules():
+        o = m.extra_repr()
+        p = sum([np.prod(p.size()) for p in m.parameters()])
+        fn = lambda o, p: o + f"{p/1e6:<.3f} M params."
+        setattr(m, "extra_repr", partial(fn, o=o, p=p))
+    print(supercodec)
+    print("Total # of params:", sum([np.prod(p.size()) for p in  supercodec.parameters()]))
