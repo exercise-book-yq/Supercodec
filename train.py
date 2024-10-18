@@ -181,7 +181,7 @@ def train(rank, a, h):
                                           h.fmin, h.fmax_for_loss)
 
             loss_mel = F.l1_loss(wave_mel, recon_g_mel) * 45
-            loss = loss_g + loss_w + loss_mel
+            loss = loss_g + loss_w[0].sum() + loss_mel
             loss.backward()
             optim_g.step()
 
