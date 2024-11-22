@@ -180,7 +180,7 @@ def train(rank, a, h):
             recon_g_mel = mel_spectrogram(recon_g.squeeze(1), h.n_fft, h.num_mels, h.sampling_rate, h.hop_size, h.win_size,
                                           h.fmin, h.fmax_for_loss)
 
-            loss_mel = F.l1_loss(wave_mel, recon_g_mel) * 45
+            loss_mel = F.l1_loss(wave_mel, recon_g_mel) * 15
             loss = loss_g + loss_w + loss_mel
             loss.backward()
             optim_g.step()
