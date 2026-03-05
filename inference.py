@@ -9,7 +9,6 @@ import torch
 from scipy.io.wavfile import write
 from utils import AttrDict
 from utils import mel_spectrogram, MAX_WAV_VALUE, load_wav, get_dataset_filelist
-from models import Generator
 from supercodec_causal import Supercodec
 from data import SoundDataset, get_dataloader
 from torch.utils.data import DistributedSampler, DataLoader
@@ -116,4 +115,5 @@ def main():
 
 if __name__ == '__main__':
     main()
+
 
